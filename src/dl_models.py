@@ -1,5 +1,18 @@
+from keras.layers import (
+    LSTM,
+    Bidirectional,
+    Conv1D,
+    Convolution1D,
+    Dense,
+    Dropout,
+    Embedding,
+    Flatten,
+    GlobalMaxPooling1D,
+    Input,
+    MaxPooling1D,
+)
 from keras.models import Sequential
-from keras.layers import Dense, Dropout, LSTM, Bidirectional, Flatten, Conv1D, MaxPooling1D, Embedding, Input, GlobalMaxPooling1D, Convolution1D
+
 #from keras_self_attention import SeqSelfAttention
 
 
@@ -211,7 +224,7 @@ class DlModels:
 
         model.add(Flatten())
 
-        model.add(Dense(len(self.categories), activation='sigmoid'))
+        model.add(Dense(2, activation='sigmoid'))
 
         return model
 

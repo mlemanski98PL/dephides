@@ -1,22 +1,25 @@
-import os
-import json
-import time
-import pprint
 import argparse
 import datetime
-import numpy as np
-import seaborn as sns
+import json
+import os
+import pickle
+import pprint
+import time
+
+import keras
 import keras.callbacks as ckbs
 import matplotlib.pyplot as plt
-from keras.utils import np_utils
+import numpy as np
+import seaborn as sns
 from keras.preprocessing import sequence
-from sklearn.preprocessing import LabelEncoder
-from keras.preprocessing.text import Tokenizer
-from dl_models import DlModels
+from keras.utils import to_categorical
 from sklearn import svm
-from sklearn.naive_bayes import GaussianNB
 from sklearn.ensemble import RandomForestClassifier
 from sklearn.metrics import accuracy_score, classification_report, confusion_matrix
+from sklearn.naive_bayes import GaussianNB
+from sklearn.preprocessing import LabelEncoder
+
+from dl_models import DlModels
 
 # sunucuda calismak icin
 plt.switch_backend('agg')
@@ -70,9 +73,9 @@ class PhishingUrlDetection:
 
     def load_and_vectorize_data(self):
         print("data loading")
-        train = [line.strip() for line in open("{}/train.txt".format(self.params['dataset_dir']), "r").readlines()[0:10]]
-        test = [line.strip() for line in open("{}/test.txt".format(self.params['dataset_dir']), "r").readlines()[0:10]]
-        val = [line.strip() for line in open("{}/val.txt".format(self.params['dataset_dir']), "r").readlines()[0:10]]
+        train = [line.strip() for line in open("{}/train.txt".format(self.params['dataset_dir']), "r").readlines()]#[0:10]]
+        test = [line.strip() for line in open("{}/test.txt".format(self.params['dataset_dir']), "r").readlines()]#[0:10]]
+        val = [line.strip() for line in open("{}/val.txt".format(self.params['dataset_dir']), "r").readlines()]#[0:10]]
 
         TEST_RESULTS['data']['samples_train'] = len(train)
         TEST_RESULTS['data']['samples_test'] = len(test)
@@ -89,20 +92,79 @@ class PhishingUrlDetection:
         raw_x_test = [line.split("\t")[1] for line in test]
         raw_y_test = [line.split("\t")[0] for line in test]
 
-        tokener = Tokenizer(lower=True, char_level=True, oov_token='-n-')
-        tokener.fit_on_texts(raw_x_train + raw_x_val + raw_x_test)
-        self.params['char_index'] = tokener.word_index
+        # tokener = keras.preprocessing.text.Tokenizer(lower=True, char_level=True, oov_token='-n-')
+        # tokener.fit_on_texts(raw_x_train + raw_x_val + raw_x_test)
+        # self.params['char_index'] = tokener.word_index
 
-        x_train = np.asanyarray(tokener.texts_to_sequences(raw_x_train))
-        x_val = np.asanyarray(tokener.texts_to_sequences(raw_x_val))
-        x_test = np.asanyarray(tokener.texts_to_sequences(raw_x_test))
+        # x_train = np.asanyarray(tokener.texts_to_sequences(raw_x_train))
+        # x_val = np.asanyarray(tokener.texts_to_sequences(raw_x_val))
+        # x_test = np.asanyarray(tokener.texts_to_sequences(raw_x_test))
+
+
+        vectorize_layer = keras.layers.TextVectorization(
+            max_tokens=None,  # You can set a specific limit if needed
+            standardize='lower_and_strip_punctuation',  # Lowercase and strip punctuation
+            split='character',  # Split by character since char_level=True in original code
+            output_mode='int'
+        )
+
+        # Fit the layer on your text data
+        raw_text_data = raw_x_train + raw_x_val + raw_x_test
+        vectorize_layer.adapt(raw_text_data)
+
+        # Get the vocabulary and save it if needed
+        vocab = vectorize_layer.get_vocabulary()
+        char_index = {word: index for index, word in enumerate(vocab)}
+        self.params['char_index'] = char_index
+        print('CHAR_INDEX', char_index)
+
+
+        # def save_text_vectorizer(vectorizer, path_vector, path_char_index):
+        #     config = vectorizer.get_config()
+        #     weights = vectorizer.get_weights()[0]
+            
+        #     pickle_path = path_vector + ".pkl"
+        #     with open(pickle_path, 'wb') as f:
+        #         pickle.dump({'config': config, 'weights': weights}, f)
+            
+
+
+        def save_text_vectorizer(vectorizer, path, path_char_index):
+            config = vectorizer.get_config()
+            vocab = vectorizer.get_vocabulary()
+            
+            
+            config_json = path + "_config.json"
+            vocab_json = path + "_vocab.json"
+            text_path = path_char_index + ".json"
+
+
+            
+            with open(config_json, 'w') as f:
+                json.dump(config, f)
+            
+            with open(vocab_json, 'w') as f:
+                json.dump(vocab, f)
+
+            with open(text_path, 'w') as f:
+                json.dump(self.params['char_index'], f)
+
+
+        save_text_vectorizer(vectorize_layer, f"{self.params['result_dir']}vectorizer", f"{self.params['result_dir']}char_index")
+
+        # Use the layer to vectorize your text data
+        x_train = np.array(vectorize_layer(raw_x_train))
+        x_val = np.array(vectorize_layer(raw_x_val))
+        x_test = np.array(vectorize_layer(raw_x_test))
 
         encoder = LabelEncoder()
         encoder.fit(self.params['categories'])
 
-        y_train = np_utils.to_categorical(encoder.transform(raw_y_train), num_classes=len(self.params['categories']))
-        y_val = np_utils.to_categorical(encoder.transform(raw_y_val), num_classes=len(self.params['categories']))
-        y_test = np_utils.to_categorical(encoder.transform(raw_y_test), num_classes=len(self.params['categories']))
+        print('XXXXXXXXXXX',self.params['categories'])
+
+        y_train = to_categorical(encoder.transform(raw_y_train), num_classes=len(self.params['categories']))
+        y_val = to_categorical(encoder.transform(raw_y_val), num_classes=len(self.params['categories']))
+        y_test = to_categorical(encoder.transform(raw_y_test), num_classes=len(self.params['categories']))
 
         print("Data are loaded.")
 
@@ -114,11 +176,15 @@ class PhishingUrlDetection:
         x_test = sequence.pad_sequences(x_test, maxlen=self.params['sequence_length'])
         x_val = sequence.pad_sequences(x_val, maxlen=self.params['sequence_length'])
 
+
+        print(x_train.shape, 'train sequences')
+        print(y_train.shape, 'train labels')
+
         print("train sequences: {}  |  test sequences: {} | val sequences: {}\n"
               "x_train shape: {}  |  x_test shape: {} | x_val shape: {}\n"
               "Building Model....".format(len(x_train), len(x_test), len(x_val), x_train.shape, x_test.shape, x_val.shape))
 
-        model = self.dl_models.cnn_complex3(self.params['char_index'])
+        model = self.dl_models.cnn_complex(self.params['char_index'])
         # Build Deep Learning Architecture
 
         model.compile(loss=self.params['loss_function'], optimizer=self.params['optimizer'], metrics=['accuracy'])
@@ -139,7 +205,14 @@ class PhishingUrlDetection:
         TEST_RESULTS['test_result']['test_time'] = time.time() - t
 
         y_test = list(np.argmax(np.asanyarray(np.squeeze(y_test), dtype=int).tolist(), axis=1))
-        y_pred = model.predict_classes(x_test, batch_size=self.params['batch_test'], verbose=1).tolist()
+        # y_pred = model.predict_classes(x_test, batch_size=self.params['batch_test'], verbose=1).tolist()
+
+        print('X_TEST', x_test)
+        y_pred = np.argmax(model.predict(x_test, batch_size=self.params['batch_test'], verbose=1), axis=1).tolist()
+
+        print(y_test, 'y_test')
+        print(y_pred, 'y_pred')
+
         report = classification_report(y_test, y_pred, target_names=self.params['categories'])
         print(report)
         TEST_RESULTS['test_result']['report'] = report
@@ -196,16 +269,27 @@ class PhishingUrlDetection:
 
         TEST_RESULTS['params'] = self.params
 
+        # model_json = model.to_json()
+        # model.save("{}model_all.h5".format(self.params['result_dir']))
+        # open("{0}model.json".format(self.params['result_dir']), "w").write(json.dumps(model_json))
+        # model.save_weights("{0}weights.h5".format(self.params['result_dir']))
+
+                # Save the entire model in the native Keras format
+        model.save(f"{self.params['result_dir']}model_all.keras")
+
+        # Save the model architecture as JSON
         model_json = model.to_json()
-        model.save("{}model_all.h5".format(self.params['result_dir']))
-        open("{0}model.json".format(self.params['result_dir']), "w").write(json.dumps(model_json))
-        model.save_weights("{0}weights.h5".format(self.params['result_dir']))
+        with open(f"{self.params['result_dir']}model.json", "w") as json_file:
+            json.dump(model_json, json_file)
+
+        # Save the model weights separately
+        # model.save_weights(f"{self.params['result_dir']}/weights.keras")
 
         open("{0}raw_test_results.json".format(self.params['result_dir']), "w").write(json.dumps(TEST_RESULTS))
         open("{0}model_summary.txt".format(self.params['result_dir']), "w").write(TEST_RESULTS['hiperparameter']["model_summary"])
         open("{0}classification_report.txt".format(self.params['result_dir']), "w").write(TEST_RESULTS['test_result']['report'])
 
-        self.ml_plotter.plot_graphs(TEST_RESULTS['epoch_history']['acc'], TEST_RESULTS['epoch_history']['val_acc'], save_to=self.params['result_dir'], name="accuracy")
+        self.ml_plotter.plot_graphs(TEST_RESULTS['epoch_history']['accuracy'], TEST_RESULTS['epoch_history']['val_accuracy'], save_to=self.params['result_dir'], name="accuracy")
         self.ml_plotter.plot_graphs(TEST_RESULTS['epoch_history']['loss'], TEST_RESULTS['epoch_history']['val_loss'], save_to=self.params['result_dir'], name="loss")
         self.ml_plotter.plot_confusion_matrix(TEST_RESULTS['test_result']['test_confusion_matrix'], self.params['categories'], save_to=self.params['result_dir'])
         self.ml_plotter.plot_confusion_matrix(TEST_RESULTS['test_result']['test_confusion_matrix'], self.params['categories'], save_to=self.params['result_dir'], normalized=True)
